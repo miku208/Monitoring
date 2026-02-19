@@ -1,0 +1,57 @@
+export default async function handler(req, res) {
+  try {
+    const { id } = req.query;
+
+    const url = process.env[`PANEL_${id}_URL`];
+    const key = process.env[`PANEL_${id}_KEY`];
+
+    const response = await fetch(`${url}/api/application/servers`, {
+      headers: {
+        "Authorization": `Bearer ${key}`,
+        "Accept": "application/json"
+      }
+    });
+
+    const data = await response.json();
+
+    const servers = await Promise.all(
+      data.data.map(async (s) => {
+        try {
+          const r = await fetch(
+            `${url}/api/client/servers/${s.attributes.identifier}/resources`,
+            {
+              headers: {
+                "Authorization": `Bearer ${key}`,
+                "Accept": "application/json"
+              }
+            }
+          );
+
+          const rd = await r.json();
+
+          return {
+            id: s.attributes.identifier,
+            name: s.attributes.name,
+            status: rd.attributes.current_state,
+            cpu: rd.attributes.resources.cpu_absolute,
+            ram: rd.attributes.resources.memory_bytes
+          };
+
+        } catch {
+          return {
+            id: s.attributes.identifier,
+            name: s.attributes.name,
+            status: "offline",
+            cpu: 0,
+            ram: 0
+          };
+        }
+      })
+    );
+
+    res.status(200).json({ success: true, servers });
+
+  } catch {
+    res.status(500).json({ success: false });
+  }
+}
