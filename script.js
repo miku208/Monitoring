@@ -142,6 +142,7 @@ async function loadAllServers() {
 }
 
 // Load servers untuk panel tertentu
+// Load servers untuk panel tertentu
 async function loadPanelServers(panelIndex) {
     const panel = panels[panelIndex];
     const serversGrid = document.getElementById(`panel-servers-${panelIndex}`);
@@ -149,23 +150,179 @@ async function loadPanelServers(panelIndex) {
     
     try {
         statusEl.textContent = 'Mengambil data...';
+        statusEl.style.color = '#a0aec0';
+        
+        console.log(`Loading servers for panel ${panelIndex}...`);
         
         const response = await fetch(`/api/servers.js?panel=${panelIndex}`);
-        const servers = await response.json();
+        const result = await response.json();
         
-        statusEl.textContent = `${servers.length} server`;
+        console.log(`Panel ${panelIndex} response:`, result);
+        
+        // Check if response has error
+        if (result.error) {
+            throw new Error(result.message || result.error);
+        }
+        
+        // Check if servers array exists
+        if (!result.servers || !Array.isArray(result.servers)) {
+            console.error('Invalid servers data:', result);
+            throw new Error('Invalid response format from server');
+        }
+        
+        const servers = result.servers;
+        statusEl.textContent = `${servers.length} server${servers.length !== 1 ? 's' : ''}`;
+        statusEl.style.color = '#9ae6b4';
         
         if (servers.length === 0) {
-            serversGrid.innerHTML = '<div class="loading">Tidak ada server</div>';
+            serversGrid.innerHTML = '<div class="loading">✨ Tidak ada server</div>';
             return;
         }
         
+        // Clear loading state
         serversGrid.innerHTML = '';
+        
+        // Create server cards
         servers.forEach(server => {
             const card = createServerCard(server, panelIndex);
             serversGrid.appendChild(card);
         });
         
+        // Load resources for each server
+        servers.forEach(server => {
+            if (server.identifier && server.identifier !== 'unknown') {
+                loadServerResources(panelIndex, server.identifier);
+            }
+        });
+        
+    } catch (error) {
+        console.error(`Error loading panel ${panelIndex}:`, error);
+        
+        statusEl.textContent = 'Error';
+        statusEl.style.color = '#fc8181';
+        
+        serversGrid.innerHTML = `
+            <div class="error">
+                <strong>Gagal memuat server:</strong><br>
+                ${error.message}
+                <br><br>
+                <small>Panel: ${panel.name} (${panel.url})</small>
+                <br>
+                <button onclick="retryLoadPanel(${panelIndex})" class="power-btn" style="margin-top: 0.5rem;">
+                    🔄 Coba Lagi
+                </button>
+            </div>
+        `;
+    }
+}
+
+// Retry loading panel
+window.retryLoadPanel = function(panelIndex) {
+    const serversGrid = document.getElementById(`panel-servers-${panelIndex}`);
+    serversGrid.innerHTML = '<div class="loading">Mencoba lagi...</div>';
+    loadPanelServers(panelIndex);
+};
+
+// Load server resources dengan error handling lebih baik
+async function loadServerResources(panelIndex, serverId) {
+    try {
+        const response = await fetch(`/api/power.js?panel=${panelIndex}&server=${serverId}&action=resources`);
+        const result = await response.json();
+        
+        // Check for error
+        if (result.error) {
+            console.warn(`Resource error for ${serverId}:`, result.message);
+            return;
+        }
+        
+        updateServerMetrics(panelIndex, serverId, result);
+        updateServerCharts(panelIndex, serverId, result);
+        
+        // Update status based on resources
+        const currentState = result.attributes?.current_state || 'offline';
+        const card = document.getElementById(`server-${panelIndex}-${serverId}`);
+        
+        if (card) {
+            // Update card class
+            card.className = `server-card ${currentState}`;
+            
+            // Update status badge
+            const statusBadge = card.querySelector('.server-status');
+            if (statusBadge) {
+                statusBadge.className = `server-status ${currentState}`;
+                statusBadge.textContent = currentState;
+            }
+        }
+        
+    } catch (error) {
+        console.error(`Error loading resources for ${serverId}:`, error);
+        
+        // Show offline status in charts
+        const cpuElement = document.getElementById(`cpu-value-${panelIndex}-${serverId}`);
+        const ramElement = document.getElementById(`ram-value-${panelIndex}-${serverId}`);
+        
+        if (cpuElement) cpuElement.textContent = 'Offline';
+        if (ramElement) ramElement.textContent = 'Offline';
+        
+        // Update card to offline
+        const card = document.getElementById(`server-${panelIndex}-${serverId}`);
+        if (card) {
+            card.className = 'server-card offline';
+            const statusBadge = card.querySelector('.server-status');
+            if (statusBadge) {
+                statusBadge.className = 'server-status offline';
+                statusBadge.textContent = 'offline';
+            }
+        }
+    }
+}
+
+// Fungsi untuk test koneksi panel
+window.testPanelConnection = async function(panelIndex) {
+    const panel = panels[panelIndex];
+    
+    try {
+        const response = await fetch(`/api/servers.js?panel=${panelIndex}`);
+        const data = await response.json();
+        
+        if (data.error) {
+            alert(`Error: ${data.message || data.error}`);
+        } else {
+            alert(`✅ Panel ${panel.name} terhubung!\nJumlah server: ${data.total || 0}`);
+        }
+    } catch (error) {
+        alert(`❌ Gagal terhubung: ${error.message}`);
+    }
+};
+
+// Tambahkan tombol test di panel header
+function renderPanels() {
+    const container = document.getElementById('panelsContainer');
+    container.innerHTML = '';
+    
+    panels.forEach((panel, index) => {
+        const section = document.createElement('div');
+        section.className = 'panel-section';
+        section.dataset.panelIndex = index;
+        section.innerHTML = `
+            <div class="panel-header">
+                <div style="display: flex; align-items: center; gap: 0.5rem;">
+                    <span class="panel-name">${panel.name}</span>
+                    <button onclick="testPanelConnection(${index})" class="power-btn" style="padding: 0.25rem 0.5rem; font-size: 0.7rem;" title="Test Koneksi">
+                        🔌
+                    </button>
+                </div>
+                <span class="panel-status" id="panel-status-${index}">Loading...</span>
+            </div>
+            <div class="servers-grid" id="panel-servers-${index}">
+                <div class="loading">Memuat server...</div>
+            </div>
+        `;
+        container.appendChild(section);
+    });
+    
+    renderNavDots();
+}
         // Load resources untuk setiap server
         servers.forEach(server => {
             loadServerResources(panelIndex, server.identifier);
